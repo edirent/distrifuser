@@ -1,0 +1,1 @@
+torchrun --nproc_per_node=1 scripts/sdxl_example.py
