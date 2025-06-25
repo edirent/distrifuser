@@ -2,11 +2,17 @@ from datasets import load_dataset
 from dateutil import parser
 from datetime import datetime
 import torch
+import time
 
 from distrifuser.pipelines import DistriSDXLPipeline
 from distrifuser.utils import DistriConfig
+import os
 
-# 1. 流式加载 metadata，只取 prompt 和 timestamp，去重，收集 100 条
+os.environ['HF_HOME'] = '/u/lanius/huggingface'
+os.environ['TRANSFORMERS_CACHE'] = '/u/lanius/huggingface'
+os.environ['HF_DATASETS_CACHE'] = '/u/lanius/huggingface'
+
+# Load metadata stream, extract prompt and timestamp, deduplicate, collect 100 entries
 ds = load_dataset(
     'poloclub/diffusiondb',
     'large_text_only',
@@ -23,7 +29,7 @@ for rec in ds:
     last_prompt = p
 
     ts = rec['timestamp']
-    # 统一转换为 datetime
+    # Convert to datetime uniformly
     if not isinstance(ts, datetime):
         ts = parser.isoparse(ts)
     prompt_ts.append((p, ts))
@@ -31,28 +37,46 @@ for rec in ds:
     if len(prompt_ts) >= 100:
         break
 
-# 2. 按 timestamp 升序排序
+# Sort by timestamp in ascending order
 prompt_ts.sort(key=lambda x: x[1])
 
-# 3. 初始化并加载 DistriSDXLPipeline
+# Initialize and load DistriSDXLPipeline
 distri_config = DistriConfig(height=1024, width=1024, warmup_steps=4)
 pipeline = DistriSDXLPipeline.from_pretrained(
     distri_config=distri_config,
     pretrained_model_name_or_path="stabilityai/stable-diffusion-xl-base-1.0",
     variant="fp16",
-    use_safetensors=True,
+    mode="sync_gn",
+    split_scheme="row",
 )
-# 屏蔽非主进程的进度条
+# Disable progress bar for non-main processes
 pipeline.set_progress_bar_config(disable=distri_config.rank != 0)
 
-# 4. 循环生成并保存图片
+# Start timing - record image generation start time
+if distri_config.rank == 0:
+    print(f"Starting generation of {len(prompt_ts)} images...")
+    generation_start_time = time.time()
+
+# Generate and save images in loop
 for idx, (prompt, _) in enumerate(prompt_ts):
-    # 不同 seed 保证多样性
+    # Use different seeds for diversity
     gen = torch.Generator(device="cuda").manual_seed(233 + idx)
     image = pipeline(prompt=prompt, generator=gen).images[0]
     
-    # 只由 rank 0 进程保存文件，避免重复
+    # Only rank 0 process saves files to avoid duplication
     if distri_config.rank == 0:
         filename = f"image_{idx:03d}.png"
         image.save(filename)
-        print(f"Saved {filename}")
+        print(f"Saved {filename} ({idx+1}/{len(prompt_ts)})")
+
+# End timing and output total time
+if distri_config.rank == 0:
+    generation_end_time = time.time()
+    total_time = generation_end_time - generation_start_time
+    avg_time_per_image = total_time / len(prompt_ts)
+    
+    print(f"\n=== Generation Complete Statistics ===")
+    print(f"Total images: {len(prompt_ts)}")
+    print(f"Total generation time: {total_time:.2f} seconds")
+    print(f"Average time per image: {avg_time_per_image:.2f} seconds")
+    print(f"Throughput: {len(prompt_ts)/total_time:.2f} images/second")

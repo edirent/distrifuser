@@ -1,0 +1,28 @@
+salloc -A bcrn-delta-gpu \
+  --partition=gpuA100x4-interactive \
+  --nodes=1 \
+  --ntasks-per-node=1 \
+  --cpus-per-task=8 \
+  --gpus-per-node=4 \
+  --mem=128g \
+  --time=01:00:00 \
+
+torchrun --nproc_per_node=2 scripts/fig3.py
+
+N=1 
+总图像数量: 100
+总生成时间: 563.44 秒
+平均每张图时间: 5.63 秒
+吞吐量: 0.18 张/秒
+
+N = 2
+总图像数量: 100
+总生成时间: 360.11 秒
+平均每张图时间: 3.60 秒
+吞吐量: 0.28 张/秒
+
+N=4
+总图像数量: 100
+总生成时间: 284.72 秒
+平均每张图时间: 2.85 秒
+吞吐量: 0.35 张/秒
