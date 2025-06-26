@@ -11,7 +11,8 @@ class NaivePatchUNet(BaseModel):  # for Patch Parallelism
     def __init__(self, model: UNet2DConditionModel, distri_config: DistriConfig):
         assert isinstance(model, UNet2DConditionModel)
         super(NaivePatchUNet, self).__init__(model, distri_config)
-
+        self.times = []
+        
     def forward(
         self,
         sample: torch.FloatTensor,
@@ -128,7 +129,9 @@ class NaivePatchUNet(BaseModel):  # for Patch Parallelism
                     sample = sample.view(1, c, h, distri_config.n_device_per_batch, -1)[
                         ..., distri_config.split_idx(), :
                     ]
-
+                start_comp = torch.cuda.Event(enable_timing=True)
+                end_comp = torch.cuda.Event(enable_timing=True)
+                start_comp.record()
                 output = self.model(
                     sample,
                     timestep,
@@ -144,14 +147,32 @@ class NaivePatchUNet(BaseModel):  # for Patch Parallelism
                     encoder_attention_mask=encoder_attention_mask,
                     return_dict=False,
                 )[0]
+                end_comp.record()
+                
+                
                 if self.output_buffer is None:
                     self.output_buffer = torch.empty((b, c, h, w), device=output.device, dtype=output.dtype)
                 if self.buffer_list is None:
                     self.buffer_list = [torch.empty_like(output.view(-1)) for _ in range(distri_config.world_size)]
+                start_comm = torch.cuda.Event(enable_timing=True)
+                end_comm = torch.cuda.Event(enable_timing=True)
+                start_comm.record()
+                
                 dist.all_gather(self.buffer_list, output.contiguous().view(-1), async_op=False)
+                
                 buffer_list = [buffer.view(output.shape) for buffer in self.buffer_list]
                 torch.cat(buffer_list[: distri_config.n_device_per_batch], dim=split_dim, out=self.output_buffer[0:1])
                 torch.cat(buffer_list[distri_config.n_device_per_batch :], dim=split_dim, out=self.output_buffer[1:2])
+                end_comm.record()
+                torch.cuda.synchronize()
+                comp_time = start_comp.elapsed_time(end_comp)
+                comm_time = start_comm.elapsed_time(end_comm)
+                if self.counter > 2:
+                    self.times.append({
+                        "step": self.counter,
+                        "comp_time": comp_time,
+                        "comm_time": comm_time,
+                    })
                 output = self.output_buffer
             else:
                 if distri_config.split_scheme == "row":

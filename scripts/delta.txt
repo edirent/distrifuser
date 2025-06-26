@@ -1,13 +1,27 @@
 salloc -A bcrn-delta-gpu \
-  --partition=gpuA100x4-interactive \
+  --partition=gpuA100x8-interactive \
   --nodes=1 \
   --ntasks-per-node=1 \
   --cpus-per-task=8 \
+  --gpus-per-node=8 \
+  --mem=128g \
+  --time=01:00:00 \
+
+  salloc -A bcrn-delta-gpu \
+  --partition=gpuA100x4-interactive \
+  --nodes=1 \
+  --ntasks-per-node=1 \
+  --cpus-per-task=4 \
   --gpus-per-node=4 \
   --mem=128g \
   --time=01:00:00 \
 
+
 torchrun --nproc_per_node=2 scripts/fig3.py
+
+torchrun --nproc_per_node=4 scripts/fig3.py
+
+torchrun --nproc_per_node=4 scripts/sdxl_example.py
 
 N=1 
 总图像数量: 100
@@ -26,3 +40,27 @@ N=4
 总生成时间: 284.72 秒
 平均每张图时间: 2.85 秒
 吞吐量: 0.35 张/秒
+
+sbatch \
+  -A bcrn-delta-gpu \
+  -p gpuA100x8 \
+  --nodes=1 \
+  --ntasks-per-node=1 \
+  --cpus-per-task=8 \
+  --gpus-per-node=8 \
+  --mem=128g \
+  --time=1:00:00 \
+
+  -J fig3_torchrun \
+  -o scripts/fig3-tr%j.out \
+  -e scripts/fig3-tr%j.err \
+  --wrap="cd /u/lanius/distrifuser/scripts && \
+    module purge && module load anaconda3_gpu cuda/11.7 && \
+    source activate myenv && \
+    torchrun --nproc_per_node=8 fig3.py"
+
+N=4 
+Total images: 100
+Total generation time: 391.63 seconds
+Average time per image: 3.92 seconds
+Throughput: 0.26 images/second
