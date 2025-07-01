@@ -8,7 +8,6 @@ distri_config = DistriConfig(
     height=1024,
     width=1024,
     warmup_steps=2,
-    mode="full_sync",
     use_cuda_graph=False,
 )
 pipeline = DistriSDXLPipeline.from_pretrained(
